@@ -1,5 +1,5 @@
 use futures::prelude::*;
-use libp2p::swarm::{Swarm, SwarmEvent, dial_opts::DialOpts};
+use libp2p::swarm::{Swarm, SwarmEvent};
 use libp2p::{identity, Multiaddr, PeerId, ping};
 use std::error::Error;
 

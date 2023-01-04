@@ -3,4 +3,5 @@
 members = [
     "leader",
     "orchestrator",
+    "keeper"
 ]
