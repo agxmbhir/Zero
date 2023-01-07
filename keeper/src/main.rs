@@ -56,6 +56,8 @@ async fn main() {
     // Registering the node with the rendezvous server
     swarm.behaviour_mut().rendezvous.register(Namespace::from_static("Epoch"), local_peer_id.clone(), None);
     // Discovering the rendezvous server
+
+    // Connecting to the leader
     // Subscribing to the "Epoch Topic"
     swarm.behaviour_mut().gossipsub.subscribe(&topic).unwrap();
     loop {
@@ -65,7 +67,9 @@ async fn main() {
             libp2p::swarm::SwarmEvent::Behaviour(KeeperEvent::Gossipsub(
                 GossipsubEvent::Message { propagation_source, message_id, message }
             )) => {
-              println!("Received message: {:?}, Source {:?}, Message ID {:?} ", message, propagation_source, message_id);
+              println!("Received message: {:?}, Source {:?}, Message ID {:?} ", 
+              String::from_utf8_lossy(&message.data)
+              , propagation_source, message_id);
             },
             libp2p::swarm::SwarmEvent::Behaviour(KeeperEvent::Gossipsub(
                 GossipsubEvent::Subscribed { peer_id, topic }

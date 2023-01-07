@@ -1,88 +1,85 @@
-use futures::{prelude::*, select};
-use libp2p::gossipsub::{Gossipsub, GossipsubEvent, MessageAuthenticity};
-use libp2p::rendezvous;
-use libp2p::swarm::{NetworkBehaviour, Swarm, SwarmEvent};
-use libp2p::{identity, PeerId};
-use std::io::{self, BufRead};
-use std::sync::Arc;
-// Import mutex
-use futures::lock::Mutex;
-// use futures 
-use std::thread;
+mod peer;
+use peer::{Peer};
+use futures::{prelude::*, select, lock::Mutex};
+use libp2p::
+{
+    gossipsub::{Gossipsub, GossipsubEvent, MessageAuthenticity},
+    rendezvous,
+    swarm::{NetworkBehaviour, Swarm, SwarmEvent},
+};
+use async_std::io;
+use std::{thread, sync::Arc};
+
 #[async_std::main]
 async fn main() {
-    // Create a random PeerId
-    let local_key = identity::Keypair::generate_ed25519();
-    let local_peer_id = PeerId::from(local_key.public());
 
-    // Create a Swarm to manage peers and events
-    let transport = libp2p::development_transport(local_key.clone())
+    let peer = Peer::init_random();
+    
+    // Selecting a transport, not using a transport layer security for now
+    let transport = libp2p::development_transport(peer.key.clone())
         .await
         .unwrap();
+
+    // Gossipsub configuration
     let gossip_config = libp2p::gossipsub::GossipsubConfig::default();
-    let message_authenticity = MessageAuthenticity::Signed(local_key.clone());
+    let message_authenticity = MessageAuthenticity::Signed(peer.key.clone());
 
     // Network Behaviours
+    // Gossip to select the leader and to broadcast the epoch
     let gossip_behaviour = Gossipsub::new(message_authenticity, gossip_config).unwrap();
+
+    // Rendezvous server to discover the leader
     let rendezvous_server_behaviour =
         rendezvous::server::Behaviour::new(rendezvous::server::Config::default());
-    let rendezvous_client_behaviour = rendezvous::client::Behaviour::new(local_key.clone());
 
-    let mut swarm = Swarm::with_threadpool_executor(
+    // Rendezvous client to select the leader
+    let rendezvous_client_behaviour = rendezvous::client::Behaviour::new(peer.key.clone());
+
+
+    // Swarm
+    let swarm = Swarm::with_threadpool_executor(
         transport,
         HubBehaviour {
             rendezvous_server: rendezvous_server_behaviour,
             gossipsub: gossip_behaviour,
             rendezvous_client: rendezvous_client_behaviour,
         },
-        local_peer_id,
+        peer.address,
     );
 
     let swarm = Arc::new(Mutex::new(swarm));
     let swarm_clone = swarm.clone();
+
     // Implementing gossipsub
     let topic = libp2p::gossipsub::IdentTopic::new("Epoch");
-
     swarm.lock().await.behaviour_mut().gossipsub.subscribe(&topic).unwrap();
-    swarm.lock().await.behaviour_mut().gossipsub.publish(topic.clone(), "Hello".as_bytes()).unwrap();
-    // let mut stdin = io::BufReader::new(io::stdin());
-    // let mut line = String::new();
-    // while let Ok(n) = stdin.read_line(&mut line) {
-    //     if n == 0 {
-    //         break;
-    //     }
-    //     // Send the message to all connected peers.
-    //     swarm.lock().await
-    //         .behaviour_mut()
-    //         .gossipsub
-    //         .publish(topic.clone(), line.as_bytes())
-    //         .unwrap();
-    //     // process the line
-    //     line.clear();
-    // }
+
     swarm.lock().await
         .listen_on("/ip4/0.0.0.0/tcp/62649".parse().unwrap())
         .unwrap();
 
-    // Use the disover method to find peers in every 20 seconds
-    thread::spawn(move || 
-        async move {
+    // // Use the disover method to find peers in every 20 seconds
+    async_std::task::spawn(async move {
         let mut swarm_clone = swarm_clone.lock().await;
         loop {
         thread::sleep(std::time::Duration::from_secs(20));
-        swarm_clone.behaviour_mut().rendezvous_client.discover(
-            None,
-            None,
-            None,
-            // Borrow the peer Id of the swarm mutably
-          local_peer_id
-        );
-        
- } });
-    
+        println!("Discovering peers");
+        }
+      } );
+
+     // Read full lines from stdin
+     let mut stdin = io::BufReader::new(io::stdin()).lines().fuse();
+
     loop {
         let mut swarm =  swarm.lock().await;
         select! {
+            line = stdin.select_next_some() => {
+                if let Err(e) = swarm
+                    .behaviour_mut().gossipsub
+                    .publish(topic.clone(), line.expect("Stdin not to close").as_bytes()) {
+                    println!("Publish error: {e:?}");
+             }
+            },
              event = swarm.select_next_some() =>
               match event {
                  SwarmEvent::Behaviour(HubEvent::RendezvousServer(
@@ -121,6 +118,7 @@ async fn main() {
         }
     }
 }
+
 
 #[derive(Debug)]
 pub enum HubEvent {
