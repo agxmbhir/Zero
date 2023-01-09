@@ -1648,6 +1648,7 @@ dependencies = [
  "async-std",
  "futures",
  "libp2p",
+ "tokio",
 ]
 
 [[package]]
