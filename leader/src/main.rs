@@ -1,19 +1,17 @@
 mod peer;
 use peer::{Peer};
-use futures::{prelude::*, select, lock::Mutex};
+use futures::{prelude::*};
 use libp2p::
 {
     gossipsub::{Gossipsub, GossipsubEvent, MessageAuthenticity},
     rendezvous,
     swarm::{NetworkBehaviour, Swarm, SwarmEvent},
 };
-use tokio;
+use tokio::{self, select, sync::{Mutex}, };
+// Import Arc from tokio
 // BufRead
-
-
-use std::{thread, sync::Arc, io, io::BufRead};
-
-#[async_std::main]
+use async_std::{ io, sync::Arc};
+#[tokio::main]
 async fn main() {
 
     let peer = Peer::init_random();
@@ -40,7 +38,7 @@ async fn main() {
 
 
     // Swarm
-    let swarm = Swarm::with_threadpool_executor(
+    let mut swarm = Swarm::with_threadpool_executor(
         transport,
         HubBehaviour {
             rendezvous_server: rendezvous_server_behaviour,
@@ -51,7 +49,18 @@ async fn main() {
     );
 
     let swarm = Arc::new(Mutex::new(swarm));
-    let swarm_clone = swarm.clone();
+    let swarm_clone = Arc::clone(&swarm);
+
+    let selector = 
+    tokio::spawn(async move {
+        let mut swarm = swarm_clone.lock().await;
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+               println!("Selecting the leader");
+               
+            }
+        }
+    );
 
     // Implementing gossipsub
     let topic = libp2p::gossipsub::IdentTopic::new("Epoch");
@@ -61,78 +70,77 @@ async fn main() {
         .listen_on("/ip4/0.0.0.0/tcp/62649".parse().unwrap())
         .unwrap();
 
-    // // Use the disover method to find peers in every 20 seconds
-    tokio::spawn(async move {
-        let mut swarm_clone = swarm_clone.lock().await;
-        loop {
-        thread::sleep(std::time::Duration::from_secs(20));
-        println!("Discovering peers");
-        let peers = swarm_clone.behaviour_mut().rendezvous_client.discover(
-            None,
-            None,
-            None,
-            peer.address.clone(),
-        );
-        println!("Peers discovered: {:?}", peers);
-        } 
-    }.await,
-      );
+    let mut stdin = io::BufReader::new(io::stdin()).lines().fuse();
 
-     // Read full lines from stdin
-     // Convert to a 
-   let mut stdin = io::BufReader::new(io::stdin()).lines().fuse();
-
-   std::thread::spawn(move || async {
+    let event_manager = 
+    tokio::spawn(
         async move {
-        loop {
-            let mut swarm =  swarm.lock().await;
-            select! {
-                line = stdin.select_next_some() => {
-                    if let Err(e) = swarm
-                        .behaviour_mut().gossipsub
-                        .publish(topic.clone(), line.expect("Stdin not to close").as_bytes()) {
-                        println!("Publish error: {e:?}");
-                 }
-                },
-                 event = swarm.select_next_some() =>
-                  match event {
-                     SwarmEvent::Behaviour(HubEvent::RendezvousServer(
-                        rendezvous::server::Event::PeerRegistered { peer, registration }
-                    )) => {
-                         println!("Peer {} registered: {:?}", peer, registration);
-    
-                    },
-                     // Print the peer id when started listening on a new address
-                    SwarmEvent::NewListenAddr { address, .. } => {
-                            println!("Listening on {:?}", address);
-                        },
-                    
-                    SwarmEvent::Behaviour(HubEvent::RendezvousServer(
-                        rendezvous::server::Event::PeerUnregistered { peer, namespace }
-                    )) => {
-                         println!("Peer {} unregistered from namespace: {:?}", peer, namespace);
-                    },
-                    SwarmEvent::Behaviour(HubEvent::RendezvousServer(
-                        rendezvous::server::Event::DiscoverServed { enquirer, registrations}
-                    )) => {
-                         println!("Served discover request from {}: {:?}", enquirer, registrations);
-                     },
-                     // Register a peer when connected with the swarm
-                     SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                            println!("Peer {} connected", peer_id);
-                            // List the registered peers in the rendezvous point
-                        },
-                      // Swarm event for gossipsub
-                     SwarmEvent::Behaviour(HubEvent::Gossipsub(GossipsubEvent::Subscribed { peer_id, topic })) => {
-                         println!("Peer {} subscribed to topic {:?}", peer_id, topic);
-                         swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                     },
-                     _ => {println!("Unhandled event: {:?}", event)}
-                 }
-            }
+            let mut swarm = swarm.lock().await;
+             loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                println!(
+                    "Listening to events")
+             }
+            // loop { 
+            //     select! {
+            //         line = stdin.select_next_some() => 
+            //             match line {
+            //                 Ok(line) => {
+            //                     let message = line.as_bytes().to_vec();
+            //                     swarm.behaviour_mut().gossipsub.publish(topic.clone(), message).unwrap();
+            //                 },
+            //                 Err(e) => {
+            //                     println!("Error reading from stdin: {:?}", e);
+            //                 }
+            //             },
+            //         // Read a line from stdin
+            //          event = swarm.select_next_some() =>
+            //           match event {
+            //              SwarmEvent::Behaviour(HubEvent::RendezvousServer(
+            //                 rendezvous::server::Event::PeerRegistered { peer, registration }
+            //             )) => {
+            //                  println!("Peer {} registered: {:?}", peer, registration);
+        
+            //             },
+            //              // Print the peer id when started listening on a new address
+            //             SwarmEvent::NewListenAddr { address, .. } => {
+            //                     println!("Listening on {:?}", address);
+            //                 },
+                        
+            //             SwarmEvent::Behaviour(HubEvent::RendezvousServer(
+            //                 rendezvous::server::Event::PeerUnregistered { peer, namespace }
+            //             )) => {
+            //                  println!("Peer {} unregistered from namespace: {:?}", peer, namespace);
+            //             },
+            //             SwarmEvent::Behaviour(HubEvent::RendezvousServer(
+            //                 rendezvous::server::Event::DiscoverServed { enquirer, registrations}
+            //             )) => {
+            //                  println!("Served discover request from {}: {:?}", enquirer, registrations);
+            //              },
+            //              // Register a peer when connected with the swarm
+            //              SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+            //                     println!("Peer {} connected", peer_id);
+            //                     // List the registered peers in the rendezvous point
+            //                     swarm.behaviour_mut().gossipsub.all_peers().for_each(|peer| {
+            //                         println!("Peer: {:?}", peer);
+            //                     });
+            //                 },
+            //               // Swarm event for gossipsub
+            //              SwarmEvent::Behaviour(HubEvent::Gossipsub(GossipsubEvent::Subscribed { peer_id, topic })) => {
+            //                  println!("Peer {} subscribed to topic {:?}", peer_id, topic);
+            //                  swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+            //              },
+            //              _ => {println!("Unhandled event: {:?}", event)}
+            //          }
+            //     }
+            //   };
         }
-    }.await;
-});
+    );
+
+    event_manager.await.unwrap();
+    selector.await.unwrap();
+   
+        
 }
 
 
